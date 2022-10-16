@@ -1,0 +1,12 @@
+*__pycache__*
+*.iml
+*.idea
+.vscode/
+*._.*
+.env
+*.pid
+*.DS_Store
+.~lock.*
+logs/
+.pip.conf
+nexus-cleaner.conf
