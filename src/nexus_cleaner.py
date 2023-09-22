@@ -9,7 +9,7 @@ python nexus_cleaner.py - c 20
 python nexus_cleaner.py -d 5
 
 # delete all older then 5 days, also print info about all images
-python nexus_cleaner.py -d 5 --full_into
+python nexus_cleaner.py -d 5 --full_info
 
 # delete image with name `image1` older then 5 days
 python nexus_cleaner.py -d 5 --names image1
@@ -28,11 +28,17 @@ import requests
 
 LOGGER = logging.getLogger()
 
-MIN_COUNT_VERSIONS = 10
+MIN_COUNT_VERSIONS = 5
 
 
 def parse_date(value: str):
     return datetime.fromisoformat(value)
+
+
+def format_data(value: datetime) -> str:
+    if not value:
+        return ''
+    return value.strftime('%Y-%m-%d %H:%M:%S')
 
 
 @dataclass
@@ -55,6 +61,16 @@ class Params:
     full_info: bool = False
 
 
+@dataclass
+class Stats:
+    total: int = 0
+    deleted: int = 0
+    last_modified: datetime = None
+
+    def __str__(self):
+        return f'total={self.total} deleted={self.deleted} (last_modified={format_data(self.last_modified)})'
+
+
 class NexusApi:
     config_name = 'nexus-cleaner.conf'
     url_path_assets = '/service/rest/v1/assets/'
@@ -65,7 +81,7 @@ class NexusApi:
         self.nexus_url = None
         self.login = None
         self.password = None
-        self.statuses = {}
+        self.stats: dict[str, Stats] = defaultdict(Stats)
         self.read_config()
 
     def start(self):
@@ -154,6 +170,9 @@ class NexusApi:
                 latest = sorted(assets, key=lambda x: parse_date(x['lastModified']))[-1]
                 name_items_info.append(Asset(name, version, parse_date(latest['lastModified']), latest['id']))
             sorted_by_date[name] = sorted(name_items_info, key=lambda x: x.last_modified)
+            stat_item = self.stats[name]
+            stat_item.total = len(name_items_info)
+            stat_item.last_modified = sorted_by_date[name][-1].last_modified
         return sorted_by_date
 
 
@@ -166,6 +185,7 @@ class NexusDockerCleaner(NexusApi):
             assets_for_del = self.prepare_assets_list(sorted_assets)
             for assets in assets_for_del.values():
                 self.delete_old(assets)
+        self.print_stats()
 
     def get_docker_repos(self):
         ok, data = self.make_get_request('/service/rest/v1/repositories/')
@@ -198,6 +218,8 @@ class NexusDockerCleaner(NexusApi):
             else:
                 res = 'TEST DONE'
             print(res)
+            if res:
+                self.stats[one.image_name].deleted += 1
             LOGGER.info('deleted %s status=%s', one, res)
 
     @classmethod
@@ -208,6 +230,17 @@ class NexusDockerCleaner(NexusApi):
         left_ids = {one.id for one in assets_to_del}
         for one in all_assets:
             print(f'{one} [keep: {state_values[one.id not in left_ids]}]')
+
+    def print_stats(self):
+        print()
+        if self.params.test:
+            print('-- TEST MODE --')
+        sorted_stats = sorted(self.stats.items())
+        longest_name_stats = sorted(sorted_stats, key=lambda x: len(x[0]))
+        ljust_len = min(30, len(longest_name_stats[-1][0])) + 2
+        for name, stat in sorted_stats:
+            print(f'{name.ljust(ljust_len)}: {stat}')
+        print('-- TEST MODE --')
 
 
 def create_parser():
